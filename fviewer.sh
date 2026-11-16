@@ -59,12 +59,35 @@ if [ ! -s "${TEMP_DEB}" ]; then
 fi
 
 # 4. Cài đặt package và giải quyết thư viện phụ thuộc (dependencies)
+log_info "Đang cập nhật danh sách gói APT..."
+
+# Một repository bên thứ ba có thể không hỗ trợ phiên bản Ubuntu hiện tại.
+# Không để lỗi repository không liên quan làm dừng toàn bộ quá trình cài FViewer.
+if ! $SUDO apt-get update -y; then
+    log_error "apt-get update có cảnh báo/lỗi repository. Tiếp tục thử cài FViewer..."
+fi
+
 log_info "Đang cài đặt FViewer vào hệ thống..."
-$SUDO apt-get update -y
+
+# Cài trực tiếp file .deb bằng APT để APT tự xử lý dependencies.
 if ! $SUDO apt-get install -y "${TEMP_DEB}"; then
-    log_info "Thử khắc phục dependencies bằng apt-get -f..."
+    log_error "Cài bằng APT chưa thành công. Thử cài package và sửa dependencies..."
+
+    # dpkg có thể báo thiếu dependencies; đây là bước trung gian có chủ đích.
     $SUDO dpkg -i "${TEMP_DEB}" || true
-    $SUDO apt-get install -f -y
+
+    if ! $SUDO apt-get install -f -y; then
+        log_error "Không thể tự động khắc phục dependencies."
+        log_error "Giữ lại file cài đặt tại: ${TEMP_DEB}"
+        exit 1
+    fi
+fi
+
+# Xác nhận package đã được cài ở trạng thái đã giải nén và cấu hình.
+if ! dpkg-query -W -f='${Status}' fviewer 2>/dev/null | grep -q "install ok installed"; then
+    log_error "Không tìm thấy package fviewer ở trạng thái đã cài đặt."
+    log_error "Giữ lại file cài đặt tại: ${TEMP_DEB}"
+    exit 1
 fi
 
 # 5. Cập nhật cache ứng dụng desktop cho Mint (Cinnamon/MATE/XFCE) và Kubuntu (KDE)
