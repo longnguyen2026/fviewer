@@ -94,3 +94,57 @@ if p.suffix == '.list':
 else:
     blocks = re.split(r'(?m)(?=^\\S)', data)
     for i, block in enumerate(blocks):
+        if pattern in block and not re.search(r'(?mi)^Enabled:\\s*no\\s*$', block):
+            block = block.rstrip() + '\\nEnabled: no\\n'
+        blocks[i] = block
+    result = ''.join(blocks)
+p.write_text(result)
+" "$SOURCE_FILE" "$REFIND_PATTERN"
+        done < <(find /etc/apt/sources.list.d -maxdepth 1 -type f \( -name '*.list' -o -name '*.sources' \) -print0 2>/dev/null)
+    fi
+
+    if grep -Rqs "$REFIND_PATTERN" /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
+        log_error "Không thể tự động vô hiệu hóa PPA rodsmith/refind. Tiếp tục cập nhật APT và sẽ báo nếu còn lỗi."
+    else
+        log_success "Đã vô hiệu hóa PPA rodsmith/refind không tương thích."
+    fi
+fi
+
+log_info "Đang cập nhật danh sách gói APT..."
+if ! $SUDO apt-get update -y; then
+    log_error "apt-get update còn lỗi ở repository khác. Tiếp tục thử cài FViewer..."
+fi
+
+log_info "Đang cài đặt FViewer vào hệ thống..."
+
+# Cài trực tiếp file .deb bằng APT để APT tự xử lý dependencies.
+if ! $SUDO apt-get install -y "${TEMP_DEB}"; then
+    log_error "Cài bằng APT chưa thành công. Thử cài package và sửa dependencies..."
+
+    # dpkg có thể báo thiếu dependencies; đây là bước trung gian có chủ đích.
+    $SUDO dpkg -i "${TEMP_DEB}" || true
+
+    if ! $SUDO apt-get install -f -y; then
+        log_error "Không thể tự động khắc phục dependencies."
+        log_error "Giữ lại file cài đặt tại: ${TEMP_DEB}"
+        exit 1
+    fi
+fi
+
+# Xác nhận package đã được cài ở trạng thái đã giải nén và cấu hình.
+if ! dpkg-query -W -f='${Status}' fviewer 2>/dev/null | grep -q "install ok installed"; then
+    log_error "Không tìm thấy package fviewer ở trạng thái đã cài đặt."
+    log_error "Giữ lại file cài đặt tại: ${TEMP_DEB}"
+    exit 1
+fi
+
+# 5. Cập nhật cache ứng dụng desktop cho Mint (Cinnamon/MATE/XFCE) và Kubuntu (KDE)
+log_info "Làm mới cơ sở dữ liệu desktop entry và mime..."
+if command -v update-desktop-database &>/dev/null; then
+    $SUDO update-desktop-database -q || true
+fi
+
+# 6. Dọn dẹp file tạm
+rm -f "${TEMP_DEB}"
+
+log_success "FViewer đã được cài đặt thành công trên hệ thống!"
