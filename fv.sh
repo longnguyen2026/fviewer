@@ -75,22 +75,22 @@ if grep -Rqs "$REFIND_PATTERN" /etc/apt/sources.list /etc/apt/sources.list.d 2>/
         fi
     fi
 
-    # Dự phòng cho máy không gỡ được PPA bằng add-apt-repository.
+    # Dự phòng: vô hiệu hóa đúng dòng/stanza PPA nếu lệnh remove không thành công.
+    # Dùng python3 -c thay vì heredoc để tương thích khi script chạy qua /dev/fd.
     if [ "$REFIND_REMOVED" != true ]; then
         while IFS= read -r -d '' SOURCE_FILE; do
-            case "$SOURCE_FILE" in
-                *.list)
-                    $SUDO sed -i "\\|$REFIND_PATTERN|s|^[[:space:]]*deb|# disabled: deb|" "$SOURCE_FILE"
-                    ;;
-                *.sources)
-                    $SUDO python3 - "$SOURCE_FILE" "$REFIND_PATTERN" <<'PY_DISABLE_PPA'
-import pathlib
-import re
-import sys
-
-path = pathlib.Path(sys.argv[1])
+            $SUDO python3 -c "
+import pathlib, re, sys
+p = pathlib.Path(sys.argv[1])
 pattern = sys.argv[2]
-text = path.read_text()
-stanzas = re.split(r"(?m)(?=^\\S)", text)
-updated = []
-for stanza in stanzas:
+data = p.read_text()
+if p.suffix == '.list':
+    lines = []
+    for line in data.splitlines():
+        if pattern in line and not line.lstrip().startswith('#'):
+            line = '# disabled by FViewer installer: ' + line
+        lines.append(line)
+    result = '\\n'.join(lines) + ('\\n' if data.endswith('\\n') else '')
+else:
+    blocks = re.split(r'(?m)(?=^\\S)', data)
+    for i, block in enumerate(blocks):
