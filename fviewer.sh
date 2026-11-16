@@ -75,32 +75,40 @@ if grep -Rqs "$REFIND_PATTERN" /etc/apt/sources.list /etc/apt/sources.list.d 2>/
         fi
     fi
 
-    # Dự phòng: vô hiệu hóa đúng dòng/stanza PPA nếu lệnh remove không thành công.
-    # Dùng python3 -c thay vì heredoc để tương thích khi script chạy qua /dev/fd.
+    # Dự phòng: vô hiệu hóa đúng nguồn PPA nếu add-apt-repository không xử lý được.
+    # Dùng python3 -c với dấu nháy đơn bên ngoài để tránh lỗi quote của Bash.
     if [ "$REFIND_REMOVED" != true ]; then
-        while IFS= read -r -d '' SOURCE_FILE; do
-            $SUDO python3 -c "
-import pathlib, re, sys
-p = pathlib.Path(sys.argv[1])
+        for SOURCE_FILE in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            [ -f "$SOURCE_FILE" ] || continue
+            $SUDO python3 -c '
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
 pattern = sys.argv[2]
-data = p.read_text()
-if p.suffix == '.list':
-    lines = []
-    for line in data.splitlines():
-        if pattern in line and not line.lstrip().startswith('#'):
-            line = '# disabled by FViewer installer: ' + line
-        lines.append(line)
-    result = '\\n'.join(lines) + ('\\n' if data.endswith('\\n') else '')
+content = path.read_text()
+
+if path.suffix == ".list":
+    output = []
+    for line in content.splitlines():
+        if pattern in line and not line.lstrip().startswith("#"):
+            line = "# disabled by FViewer installer: " + line
+        output.append(line)
+    result = "\\n".join(output)
+    if content.endswith("\\n"):
+        result += "\\n"
 else:
-    blocks = re.split(r'(?m)(?=^\\S)', data)
-    for i, block in enumerate(blocks):
-        if pattern in block and not re.search(r'(?mi)^Enabled:\\s*no\\s*$', block):
-            block = block.rstrip() + '\\nEnabled: no\\n'
-        blocks[i] = block
-    result = ''.join(blocks)
-p.write_text(result)
-" "$SOURCE_FILE" "$REFIND_PATTERN"
-        done < <(find /etc/apt/sources.list.d -maxdepth 1 -type f \( -name '*.list' -o -name '*.sources' \) -print0 2>/dev/null)
+    blocks = re.split(r"(?m)(?=^\\S)", content)
+    for index, block in enumerate(blocks):
+        if pattern in block and not re.search(r"(?mi)^Enabled:\\s*no\\s*$", block):
+            block = block.rstrip() + "\\nEnabled: no\\n"
+        blocks[index] = block
+    result = "".join(blocks)
+
+path.write_text(result)
+' "$SOURCE_FILE" "$REFIND_PATTERN"
+        done
     fi
 
     if grep -Rqs "$REFIND_PATTERN" /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
