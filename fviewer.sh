@@ -58,45 +58,39 @@ if [ ! -s "${TEMP_DEB}" ]; then
     exit 1
 fi
 
-# 4. Cài đặt package và giải quyết thư viện phụ thuộc (dependencies)
-log_info "Đang cập nhật danh sách gói APT..."
+# 4. Xử lý PPA không tương thích và cập nhật danh sách gói APT
+# Chỉ vô hiệu hóa PPA rodsmith/refind nếu nó đang được cấu hình.
+# Không gỡ rEFInd đã cài và không đụng đến các repository khác.
+REFIND_PPA="ppa:rodsmith/refind"
+REFIND_PATTERN="ppa.launchpadcontent.net/rodsmith/refind"
 
-# Một repository bên thứ ba có thể không hỗ trợ phiên bản Ubuntu hiện tại.
-# Không để lỗi repository không liên quan làm dừng toàn bộ quá trình cài FViewer.
-if ! $SUDO apt-get update -y; then
-    log_error "apt-get update có cảnh báo/lỗi repository. Tiếp tục thử cài FViewer..."
-fi
+if grep -Rqs "$REFIND_PATTERN" /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
+    log_info "Phát hiện PPA rodsmith/refind. Đang vô hiệu hóa nguồn PPA không tương thích..."
 
-log_info "Đang cài đặt FViewer vào hệ thống..."
+    REFIND_REMOVED=false
 
-# Cài trực tiếp file .deb bằng APT để APT tự xử lý dependencies.
-if ! $SUDO apt-get install -y "${TEMP_DEB}"; then
-    log_error "Cài bằng APT chưa thành công. Thử cài package và sửa dependencies..."
-
-    # dpkg có thể báo thiếu dependencies; đây là bước trung gian có chủ đích.
-    $SUDO dpkg -i "${TEMP_DEB}" || true
-
-    if ! $SUDO apt-get install -f -y; then
-        log_error "Không thể tự động khắc phục dependencies."
-        log_error "Giữ lại file cài đặt tại: ${TEMP_DEB}"
-        exit 1
+    if command -v add-apt-repository >/dev/null 2>&1; then
+        if $SUDO add-apt-repository -y --remove "$REFIND_PPA"; then
+            REFIND_REMOVED=true
+        fi
     fi
-fi
 
-# Xác nhận package đã được cài ở trạng thái đã giải nén và cấu hình.
-if ! dpkg-query -W -f='${Status}' fviewer 2>/dev/null | grep -q "install ok installed"; then
-    log_error "Không tìm thấy package fviewer ở trạng thái đã cài đặt."
-    log_error "Giữ lại file cài đặt tại: ${TEMP_DEB}"
-    exit 1
-fi
-
-# 5. Cập nhật cache ứng dụng desktop cho Mint (Cinnamon/MATE/XFCE) và Kubuntu (KDE)
-log_info "Làm mới cơ sở dữ liệu desktop entry và mime..."
-if command -v update-desktop-database &>/dev/null; then
-    $SUDO update-desktop-database -q || true
-fi
-
-# 6. Dọn dẹp file tạm
-rm -f "${TEMP_DEB}"
-
-log_success "FViewer đã được cài đặt thành công trên hệ thống!"
+    # Dự phòng: vô hiệu hóa đúng dòng/stanza PPA nếu lệnh remove không thành công.
+    # Dùng python3 -c thay vì heredoc để tương thích khi script chạy qua /dev/fd.
+    if [ "$REFIND_REMOVED" != true ]; then
+        while IFS= read -r -d '' SOURCE_FILE; do
+            $SUDO python3 -c "
+import pathlib, re, sys
+p = pathlib.Path(sys.argv[1])
+pattern = sys.argv[2]
+data = p.read_text()
+if p.suffix == '.list':
+    lines = []
+    for line in data.splitlines():
+        if pattern in line and not line.lstrip().startswith('#'):
+            line = '# disabled by FViewer installer: ' + line
+        lines.append(line)
+    result = '\\n'.join(lines) + ('\\n' if data.endswith('\\n') else '')
+else:
+    blocks = re.split(r'(?m)(?=^\\S)', data)
+    for i, block in enumerate(blocks):
