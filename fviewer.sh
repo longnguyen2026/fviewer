@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Script: install-fviewer.sh
+# Script: fviewer.sh (install-fviewer.sh)
 # Mô tả: Tự động tải và cài đặt FViewer (.deb) cho Linux Mint và Kubuntu
+#        Hạn chế cài đặt trên Linux Mint đối với tài khoản 'nhanvien'
 # Tác giả: longnguyen2026
 # ==============================================================================
 
@@ -29,7 +30,39 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1" >&2
 }
 
+# ==============================================================================
+# 0. Kiểm tra điều kiện Hệ điều hành & Truy vết User gốc (Chặn cả su / sudo)
+# ==============================================================================
+DISTRO_ID=""
+if [ -f /etc/os-release ]; then
+    DISTRO_ID=$(grep -E '^ID=' /etc/os-release | cut -d'=' -f2 | tr -d '"' | tr '[:upper:]' '[:lower:]')
+fi
+
+if [ "$DISTRO_ID" = "linuxmint" ]; then
+    # 1. Lấy user từ phiên đăng nhập gốc của terminal (không bị thay đổi bởi su/sudo)
+    LOGIN_USER="$(logname 2>/dev/null || true)"
+
+    # 2. Lấy user đang giữ quyền sudo trước đó (nếu có)
+    PREV_SUDO_USER="${SUDO_USER:-}"
+
+    # 3. Lấy danh sách user đang có phiên đăng nhập hoạt động (kể cả phiên desktop nền)
+    ACTIVE_SESSIONS="$(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $3}' | tr '\n' ' ')"
+
+    # Chặn nếu phát hiện bất kỳ dấu vết nào của 'nhanvien' trên Linux Mint
+    if [ "$LOGIN_USER" = "nhanvien" ] \
+       || [ "$PREV_SUDO_USER" = "nhanvien" ] \
+       || [ "$(whoami)" = "nhanvien" ] \
+       || [[ " $ACTIVE_SESSIONS " == *" nhanvien "* ]]; then
+        log_error "Từ chối cài đặt: Tài khoản 'nhanvien' không được phép cài đặt FViewer trên Linux Mint."
+        log_info "Hệ thống phát hiện phiên làm việc gốc thuộc 'nhanvien' (kể cả khi chuyển qua 'su it' hoặc 'sudo')."
+        log_info "Vui lòng đăng xuất (Log Out) hoàn toàn khỏi 'nhanvien' và đăng nhập trực tiếp bằng tài khoản 'it'."
+        exit 1
+    fi
+fi
+
+# ==============================================================================
 # 1. Kiểm tra quyền thực thi (root hoặc sudo)
+# ==============================================================================
 if [ "$(id -u)" -ne 0 ]; then
     SUDO="sudo"
 else
@@ -38,14 +71,18 @@ fi
 
 log_info "Bắt đầu quá trình triển khai FViewer cho hệ thống..."
 
+# ==============================================================================
 # 2. Đảm bảo có curl hoặc wget
+# ==============================================================================
 if ! command -v curl &>/dev/null && ! command -v wget &>/dev/null; then
     log_info "Đang cài đặt curl..."
     $SUDO apt-get update -y
     $SUDO apt-get install -y curl
 fi
 
+# ==============================================================================
 # 3. Tải gói fviewer .deb
+# ==============================================================================
 log_info "Đang tải FViewer từ: ${FVIEWER_URL}"
 if command -v curl &>/dev/null; then
     curl -fL --progress-bar "${FVIEWER_URL}" -o "${TEMP_DEB}"
@@ -58,7 +95,9 @@ if [ ! -s "${TEMP_DEB}" ]; then
     exit 1
 fi
 
+# ==============================================================================
 # 4. Xử lý PPA không tương thích và cập nhật danh sách gói APT
+# ==============================================================================
 # Chỉ vô hiệu hóa PPA rodsmith/refind nếu nó đang được cấu hình.
 # Không gỡ rEFInd đã cài và không đụng đến các repository khác.
 REFIND_PPA="ppa:rodsmith/refind"
@@ -95,14 +134,14 @@ if path.suffix == ".list":
         if pattern in line and not line.lstrip().startswith("#"):
             line = "# disabled by FViewer installer: " + line
         output.append(line)
-    result = "\\n".join(output)
-    if content.endswith("\\n"):
-        result += "\\n"
+    result = "\n".join(output)
+    if content.endswith("\n"):
+        result += "\n"
 else:
-    blocks = re.split(r"(?m)(?=^\\S)", content)
+    blocks = re.split(r"(?m)(?=^\S)", content)
     for index, block in enumerate(blocks):
-        if pattern in block and not re.search(r"(?mi)^Enabled:\\s*no\\s*$", block):
-            block = block.rstrip() + "\\nEnabled: no\\n"
+        if pattern in block and not re.search(r"(?mi)^Enabled:\s*no\s*$", block):
+            block = block.rstrip() + "\nEnabled: no\n"
         blocks[index] = block
     result = "".join(blocks)
 
@@ -146,13 +185,17 @@ if ! dpkg-query -W -f='${Status}' fviewer 2>/dev/null | grep -q "install ok inst
     exit 1
 fi
 
+# ==============================================================================
 # 5. Cập nhật cache ứng dụng desktop cho Mint (Cinnamon/MATE/XFCE) và Kubuntu (KDE)
+# ==============================================================================
 log_info "Làm mới cơ sở dữ liệu desktop entry và mime..."
 if command -v update-desktop-database &>/dev/null; then
     $SUDO update-desktop-database -q || true
 fi
 
+# ==============================================================================
 # 6. Dọn dẹp file tạm
+# ==============================================================================
 rm -f "${TEMP_DEB}"
 
 log_success "FViewer đã được cài đặt thành công trên hệ thống!"
